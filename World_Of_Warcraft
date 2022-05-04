@@ -1,0 +1,1799 @@
+#define  _CRT_SECURE_NO_WARNINGS
+#include<iostream>
+#include<iomanip>
+#include<cstdlib>
+#include<cstring>
+#include<string>
+#include<vector>
+#include<set>
+#include<algorithm>
+using namespace std;
+class warrior;
+class city;
+int M = 0;//每个司令部起初有M个生命元
+int N = 0;//城市总数，red_headquarter是0号城市，blue_headquarter是N+1号城市
+int RR = 0;//arrow的攻击力是RR
+int K = 0;//lion每前进一步，忠诚度就降低K
+int T = 0;//要求输出000:00到T（分钟）的所有事件，T是时间上限，时间到达T后程序自动结束
+bool over = 0;//over为1表示有一方司令部被占领
+int hour = 0, minute = 0;//计时器,换算关系为 T = 60 * hour + minite, 即 minute = T % 60, hour = (T - minute) / 60
+int strength[5] = { 0 };//5种武士的初始生命值，也即它们降生所消耗的司令部生命元
+int attacking[5] = { 0 };//5种武士的攻击力
+int red = 1, blue = 1;//用于充当warrior类的对象数组的下标，也即各个warrior的名字，如：
+/*  { red_warrior[red] = new dragon( ); red++; }  */
+//这样就不会出现以后需要找某个武士时出现“失踪”的情况，如遍历蓝方各个武士：
+/*  { for(int i = 0; i < blue; i++) blue_warrior[i]->... }  */
+//以上这种写法需要事先声明两个数组red_warrior[99999]和blue_warrior[99999] (类型为warrior*)
+int red_current_warrior_type = 2;//红方制造顺序：2→3→4→1→0
+int blue_current_warrior_type = 3;//蓝方制造顺序：3→0→1→2→4
+vector<warrior*>red_gift;//将要发给生命元奖励的红武士名单
+vector<warrior*>blue_gift;//将要发给生命元奖励的蓝武士名单
+vector<city*>red_harvest;//将要被红司令部收割生命元的城市
+vector<city*>blue_harvest;//将要被蓝司令部收割生命元的城市
+//const char* pointer_of_warriors[5] = { "dragon","ninja","iceman","lion","wolf" };
+string pointer_of_warriors[5] = { "dragon","ninja","iceman","lion","wolf" };
+//const char* pointer_of_weapon[3] = { "sword","bomb","arrow" };
+int min(int a, int b, int c, int d, int e)//求五个整数的最小值
+{
+	int x[5] = { a,b,c,d,e };
+	sort(x, x + 5);
+	return x[0];
+}
+double sswr(double r)//四舍五入函数（适用于保留小数点后两位），搭配setprecision(2)使用
+{  //当输入r==8.11时
+	double temp = r * 1000;//temp==8110
+	//cout << temp << endl;
+	int tmp = temp;//tmp==8109
+	//cout << tmp << endl;
+	int wei = tmp % 10;//wei==9
+	//cout << wei << endl;
+	if (wei <= 4)
+		return r;
+	else
+		return r + 0.005;//return 8.115,最终输出8.12
+}
+
+class weapon
+{
+public:
+	int type;//类型[同时也是编号]：012分别代表sword、bomb、arrow
+	int aggressivity;//武器的攻击力,但我不打算用这个变量了，战斗时的计算干脆用武士自己的攻击力乘以对应比例得了
+	int durability;//专属于arrow的耐久度
+	int R;//专属于arrow的攻击力
+	warrior* host;//主人
+	string name;//武器的名称：012分别代表sword、bomb、arrow
+	weapon() {
+
+	}
+	weapon(int _type, warrior* w);
+	
+	bool operator <(weapon w) {
+		return type > w.type;
+	}
+	void use_weapon();
+	
+	~weapon() {
+		
+	}
+};
+
+class city
+{
+private:
+
+public:
+	int number;//城市编号（0为red_headquarter，N+1为blue_headquarter）
+	int flag;//城市上空升起的旗帜（0红1蓝，-1表示无旗子）
+	int element;//城市产出的生命元
+	city(){}
+	city(int _num) {
+		number = _num; flag = -1; element = 0;
+	}
+	vector<int>RESULT;//记录着过往的战局结果，0为红方胜，1为蓝方胜，据此判断换旗子
+	int find_the_red_warrior_in_the_city(int location);//找到某个城市中的红武士并返回其编号
+	int find_the_blue_warrior_in_the_city(int location);//找到某个城市中的蓝武士并返回其编号
+	int alive_find_the_red_warrior_in_the_city(int location);
+	int alive_find_the_blue_warrior_in_the_city(int location);
+	int number_of_all_the_warriors_in_the_city(int location);
+	int number_of_all_the_red_warriors_in_the_city(int location);
+	int number_of_all_the_blue_warriors_in_the_city(int location);
+	int alive_number_of_all_the_warriors_in_the_city(int location);
+	int alive_number_of_all_the_red_warriors_in_the_city(int location);
+	int alive_number_of_all_the_blue_warriors_in_the_city(int location);
+	void shot(int location);//放箭
+	void suicide(int location);//使用bomb同归于尽
+	int battle(int location);//开始战斗
+};
+city* City[9999];
+
+class red_headquarter :public city
+{
+public:
+	int elements;//生命元
+	bool red_producing;//标志红司令部是否还在制造武士
+	int enemy;//红军司令部里的敌人数量，达到2即被占领
+	int number_of_dragon=0;
+	int number_of_ninja=0;
+	int number_of_iceman=0;
+	int number_of_lion=0;
+	int number_of_wolf=0;
+	red_headquarter() {
+		number = 0;
+		flag = 0;
+		elements = M;
+		enemy = 0;
+		red_producing = 1;
+		number_of_dragon = 0;
+		number_of_ninja = 0;
+		number_of_iceman = 0;
+		number_of_lion = 0;
+		number_of_wolf = 0;
+	}
+	void report() {
+		cout << setw(3) << setfill('0') << hour << ":50 " << elements << " elements in red headquarter" << endl;
+	}
+	void produce_warriors(); 
+
+};
+red_headquarter Red_headquarter;
+
+class blue_headquarter :public city
+{
+public:
+	int elements;//生命元
+	bool blue_producing;//标志蓝司令部是否还在制造武士
+	int enemy;//蓝军司令部里的敌人数量，达到2即被占领
+	int number_of_dragon=0;
+	int number_of_ninja=0;
+	int number_of_iceman=0;
+	int number_of_lion=0;
+	int number_of_wolf=0;
+	blue_headquarter() {
+		number = N + 1;
+		flag = 0;
+		elements = M;
+		enemy = 0;
+		blue_producing = 1;
+		number_of_dragon = 0;
+		number_of_ninja = 0;
+		number_of_iceman = 0;
+		number_of_lion = 0;
+		number_of_wolf = 0;
+	}
+	void report() {
+		cout << setw(3) << setfill('0') << hour << ":50 " << elements << " elements in blue headquarter" << endl;
+	}
+	void produce_warriors(); 
+
+};
+blue_headquarter Blue_headquarter;
+
+
+class warrior
+{
+public:
+	int type;//武士种类（01234分别代表"dragon","ninja","iceman","lion","wolf"）
+	string name;//武士名字
+	int headquarter;//所属阵营（0红1蓝）
+	int number;//编号
+	int hp;//生命值
+	int aggressivity;//武士的攻击力
+	int location;//所在城市
+	int stepstep;//用于ninja的每两步掉一次血
+	double morale;//士气
+	int loyalty;//忠诚度
+	bool marching;//标记本回合是否已经行军到下一城市（避免“一轮送到敌方司令部”的错误）[我觉得还是采用‘临时城市法’吧]
+	bool beapon0; bool beapon1; bool beapon2;
+	weapon* Weapon0;//dragon和iceman
+	weapon* Weapon1;//ninja
+	weapon* Weapon2;//ninja
+	set<weapon*> Weapon;//wolf的武器槽
+	void report()//对接每个小时的第55分钟，武士报告所拥有的武器情况
+	{
+		cout << setw(3) << setfill('0') << hour << ":55 ";
+		if (headquarter)
+			cout << "blue ";
+		else
+			cout << "red ";
+		cout << name << " " << number << " has ";
+		if (type == 0) {
+			if (beapon0) {
+				switch (Weapon0->type) {
+				case 0: {cout << Weapon0->name << "(" << Weapon0->aggressivity << ")" << endl; break; }    //sword
+				case 1: {cout << Weapon0->name << endl; break; }                                          //bomb
+				case 2: {cout << Weapon0->name << "(" << Weapon0->durability << ")" << endl; break; }      //arrow
+				default: {cout << "???????" << endl; break; }
+				}
+			}
+			else
+				cout << "no weapon" << endl;
+		}
+		else if (type == 1) {
+			//请在此补充你的代码
+			if (beapon1 == 0 && beapon2 == 0)
+				cout << "no weapon" << endl;
+			else if (beapon1 != 0 && beapon2 == 0) {
+				switch (Weapon1->type) {
+				case 0: {cout << Weapon1->name << "(" << Weapon1->aggressivity << ")" << endl; break; }    //sword
+				case 1: {cout << Weapon1->name << endl; break; }                                          //bomb
+				case 2: {cout << Weapon1->name << "(" << Weapon1->durability << ")" << endl; break; }      //arrow
+				default: {cout << "???????" << endl; break; }
+				}
+			}
+			else if (beapon1 == 0 && beapon2 != 0) {
+				switch (Weapon2->type) {
+				case 0: {cout << Weapon2->name << "(" << Weapon2->aggressivity << ")" << endl; break; }    //sword
+				case 1: {cout << Weapon2->name << endl; break; }                                          //bomb
+				case 2: {cout << Weapon2->name << "(" << Weapon2->durability << ")" << endl; break; }      //arrow
+				default: {cout << "???????" << endl; break; }
+				}
+			}
+			else if (beapon1 != 0 && beapon2 != 0) {
+				if (Weapon1->type > Weapon2->type) {
+					switch (Weapon1->type) {
+					case 0: {cout << Weapon1->name << "(" << Weapon1->aggressivity << ")"; break; }    //sword
+					case 1: {cout << Weapon1->name; break; }                                          //bomb
+					case 2: {cout << Weapon1->name << "(" << Weapon1->durability << ")"; break; }      //arrow
+					default: {cout << "???????"; break; }
+					}
+					cout << ",";
+					switch (Weapon2->type) {
+					case 0: {cout << Weapon2->name << "(" << Weapon2->aggressivity << ")" << endl; break; }    //sword
+					case 1: {cout << Weapon2->name << endl; break; }                                          //bomb
+					case 2: {cout << Weapon2->name << "(" << Weapon2->durability << ")" << endl; break; }      //arrow
+					default: {cout << "???????" << endl; break; }
+					}
+				}
+				else {
+					switch (Weapon2->type) {
+					case 0: {cout << Weapon2->name << "(" << Weapon2->aggressivity << ")"; break; }    //sword
+					case 1: {cout << Weapon2->name; break; }                                          //bomb
+					case 2: {cout << Weapon2->name << "(" << Weapon2->durability << ")"; break; }      //arrow
+					default: {cout << "???????"; break; }
+					}
+					cout << ",";
+					switch (Weapon1->type) {
+					case 0: {cout << Weapon1->name << "(" << Weapon1->aggressivity << ")" << endl; break; }    //sword
+					case 1: {cout << Weapon1->name << endl; break; }                                          //bomb
+					case 2: {cout << Weapon1->name << "(" << Weapon1->durability << ")" << endl; break; }      //arrow
+					default: {cout << "???????" << endl; break; }
+					}
+				}
+			}
+		}
+		else if (type == 2) {
+			if (beapon0) {
+				switch (Weapon0->type) {
+				case 0: {cout << Weapon0->name << "(" << Weapon0->aggressivity << ")" << endl; break; }    //sword
+				case 1: {cout << Weapon0->name << endl; break; }                                          //bomb
+				case 2: {cout << Weapon0->name << "(" << Weapon0->durability << ")" << endl; break; }      //arrow
+				default: {cout << "???????" << endl; break; }
+				}
+			}
+			else
+				cout << "no weapon" << endl;
+		}
+		else if (type == 3) {
+			cout << "no weapon" << endl;
+		}
+		else if (type == 4) {
+			//请在此补充你的代码
+			if (Weapon.size() == 0)
+				cout << "no weapon" << endl;
+			else {
+				set<weapon*>::iterator it = Weapon.begin();
+				int tmp_cnt = 0;
+				for (it = Weapon.begin(); it != Weapon.end(); ++it) {
+					if ((*it)->type == 2) { cout << (*it)->name << "(" << (*it)->durability << ")"; tmp_cnt++; }
+				}
+				if (tmp_cnt > 0 && tmp_cnt < Weapon.size())
+					cout << ",";
+				for (it = Weapon.begin(); it != Weapon.end(); ++it) {
+					if ((*it)->type == 1) { cout << (*it)->name; tmp_cnt++; }
+				}
+				if (this->aggressivity_of_find_sword() > 0 && this->existance_of_find_bomb() > 0)
+					cout << ",";
+				for (it = Weapon.begin(); it != Weapon.end(); ++it) {
+					if ((*it)->type == 0) { cout << (*it)->name << "(" << (*it)->aggressivity << ")"; tmp_cnt++; }
+				}
+				
+				
+				cout << endl;
+			}
+		}
+	}
+	int aggressivity_of_find_sword() {
+		if (beapon0 == 1) {
+			if (Weapon0->type == 0) {
+				return Weapon0->aggressivity;
+			}
+		}
+		if (beapon1 == 1) {
+			if (Weapon1->type == 0) {
+				return Weapon1->aggressivity;
+			}
+		}
+		if (beapon2 == 1) {
+			if (Weapon2->type == 0) {
+				return Weapon2->aggressivity;
+			}
+		}
+		if (Weapon.size() > 0) {
+			for (set<weapon*>::iterator it = Weapon.begin(); it != Weapon.end(); ++it) {
+				if ((*it)->type == 0)
+					return (*it)->aggressivity;
+			}
+		}
+		return -1;
+	}
+	weapon* find_sword() {
+		if (beapon0 == 1) {
+			if (Weapon0->type == 0) {
+				return Weapon0;
+			}
+		}
+		if (beapon1 == 1) {
+			if (Weapon1->type == 0) {
+				return Weapon1;
+			}
+		}
+		if (beapon2 == 1) {
+			if(Weapon2->type==0){
+				return Weapon2;
+			}
+		}
+		if (Weapon.size() > 0) {
+			for (set<weapon*>::iterator it = Weapon.begin(); it != Weapon.end(); ++it) {
+				if ((*it)->type == 0)
+					return *it;
+			}
+		}
+	}
+	int existance_of_find_bomb() {
+		if (beapon0 == 1) {
+			if (Weapon0->type == 1) {
+				return 1;
+			}
+		}
+		if (beapon1 == 1) {
+			if (Weapon1->type == 1) {
+				return 1;
+			}
+		}
+		if (beapon2 == 1) {
+			if (Weapon2->type == 1) {
+				return 1;
+			}
+		}
+		if (Weapon.size() > 0) {
+			for (set<weapon*>::iterator it = Weapon.begin(); it != Weapon.end(); ++it) {
+				if ((*it)->type == 1)
+					return 1;
+			}
+		}
+		return -1;
+	}
+	weapon* find_bomb() {
+		if (beapon0 == 1) {
+			if (Weapon0->type == 1) {
+				return Weapon0;
+			}
+		}
+		if (beapon1 == 1) {
+			if (Weapon1->type == 1) {
+				return Weapon1;
+			}
+		}
+		if (beapon2 == 1) {
+			if (Weapon2->type == 1) {
+				return Weapon2;
+			}
+		}
+		if (Weapon.size() > 0) {
+			for (set<weapon*>::iterator it = Weapon.begin(); it != Weapon.end(); ++it) {
+				if ((*it)->type == 1)
+					return *it;
+			}
+		}
+	}
+	int durability_of_find_arrow() {
+		if (beapon0 == 1) {
+			if (Weapon0->type == 2) {
+				return Weapon0->durability;
+			}
+		}
+		if (beapon1 == 1) {
+			if (Weapon1->type == 2) {
+				return Weapon1->durability;
+			}
+		}
+		if (beapon2 == 1) {
+			if (Weapon2->type == 2) {
+				return Weapon2->durability;
+			}
+		}
+		if (Weapon.size() > 0) {
+			for (set<weapon*>::iterator it = Weapon.begin(); it != Weapon.end(); ++it) {
+				if ((*it)->type == 2)
+					return (*it)->durability;
+			}
+		}
+		return -1;
+	}
+	weapon* find_arrow() {
+		if (beapon0 == 1) {
+			if (Weapon0->type == 2) {
+				return Weapon0;
+			}
+		}
+		if (beapon1 == 1) {
+			if (Weapon1->type == 2) {
+				return Weapon1;
+			}
+		}
+		if (beapon2 == 1) {
+			if (Weapon2->type == 2) {
+				return Weapon2;
+			}
+		}
+		if (Weapon.size() > 0) {
+			for (set<weapon*>::iterator it = Weapon.begin(); it != Weapon.end(); ++it) {
+				if ((*it)->type == 2)
+					return *it;
+			}
+		}
+	}
+};
+
+class red_warrior :public warrior
+{
+private:
+
+public:
+	void step()
+	{
+		if (marching == 1)
+		{
+			stepstep++;
+			if ((stepstep % 2 == 0) && (type == 2)) {
+				if (hp - 9 > 0)
+					hp -= 9;
+				else
+					hp = 1;
+				aggressivity += 20;
+			}
+			location++;
+			if (location < N + 1)
+				cout << setw(3) << setfill('0') << hour << ":10 red " << pointer_of_warriors[type] <<" " << number << " marched to city " << location
+					<< " with " << hp << " elements and force " << aggressivity << endl;
+			else if(location == N + 1)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 red " << pointer_of_warriors[type] << " " << number << " reached blue headquarter with "
+					<< hp << " elements and force " << aggressivity << endl;
+				Blue_headquarter.enemy++;
+				if (Blue_headquarter.enemy >= 2) {
+					cout << setw(3) << setfill('0') << hour << ":10 blue headquarter was taken" << endl;
+					over = 1;
+				}
+			}
+		}
+		marching = 0;
+	}
+	void yell()
+	{
+		cout << setw(3) << setfill('0') << hour << ":40 red dragon " << number << " yelled in city " << location << endl;
+	}
+	void run_away()
+	{
+		//if (hour == 2)cout << "               red dragon "<<number<<"'s loyalty == " << loyalty << endl;
+		if (loyalty <= 0) {
+			cout << setw(3) << setfill('0') << hour << ":05 red lion " << number << " ran away" << endl;
+			hp = -99999;
+			//delete this;
+		}
+	}
+};
+
+class blue_warrior :public warrior
+{
+private:
+
+public:
+	void step()
+	{
+		if (marching == 1)
+		{
+			stepstep++;
+			if ((stepstep % 2 == 0) && (type == 2)) {
+				if (hp - 9 > 0)
+					hp -= 9;
+				else
+					hp = 1;
+				aggressivity += 20;
+			}
+			location--;
+			if (location > 0)
+				cout << setw(3) << setfill('0') << hour << ":10 blue " << pointer_of_warriors[type] << " " << number << " marched to city " << location
+					<< " with " << hp << " elements and force " << aggressivity << endl;
+			else if (location == 0)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 blue " << pointer_of_warriors[type] << " " << number << " reached red headquarter with "
+					<< hp << " elements and force " << aggressivity << endl;
+				Red_headquarter.enemy++;
+				if (Red_headquarter.enemy >= 2) {
+					cout << setw(3) << setfill('0') << hour << ":10 red headquarter was taken" << endl;
+					over = 1;
+				}
+				
+			}
+			
+		}
+		marching = 0;
+	}
+	void yell()
+	{
+		cout << setw(3) << setfill('0') << hour << ":40 blue dragon " << number << " yelled in city " << location << endl;
+	}
+	void run_away()
+	{
+		//if (hour == 2)cout << "               blue dragon " << number << "'s loyalty == " << loyalty << endl;
+		if (loyalty <= 0) {
+			cout << setw(3) << setfill('0') << hour << ":05 blue lion " << number << " ran away" << endl;
+			hp = -99999;
+			//delete this;
+		}
+	}
+};
+
+red_warrior* Red_warrior[99999];
+blue_warrior* Blue_warrior[99999];
+
+class red_dragon :public red_warrior
+{
+public:
+	red_dragon(int num) {
+		type = 0;
+		name = "dragon";
+		headquarter = 0;
+		number = num;
+		hp = strength[0];
+		aggressivity = attacking[0];
+		location = 0;
+		stepstep = 0;
+		marching = 1;
+		Red_headquarter.elements -= hp;
+		Red_headquarter.number_of_dragon++;
+		morale = (double)Red_headquarter.elements / (double)strength[0];
+		Weapon0 = new weapon(number % 3, this);
+		beapon0 = 1; beapon1 = 0; beapon2 = 0;
+		if (Weapon0->type == 0 && Weapon0->aggressivity <= 0)
+		{
+			beapon0 = 0;
+			Weapon0 = nullptr;
+		}
+		cout << setw(3) << setfill('0') << hour << ":00 red dragon " << number << " born" << endl;
+		cout << "Its morale is " << fixed << setprecision(2) << morale << endl;
+	}
+	virtual void yell() //欢呼
+	{
+		cout << setw(3) << setfill('0') << hour << ":40 red dragon " << number << " yelled in city " << location << endl;
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location++;
+			if(location < N + 1)
+				cout << setw(3) << setfill('0') << hour << ":10 red dragon " << number << " marched to city " 
+					<< location << " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == N + 1)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 red dragon " << number << " reached blue headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 blue headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+};
+
+class blue_dragon :public blue_warrior
+{
+public:
+	blue_dragon(int num) {
+		type = 0;
+		name = "dragon";
+		headquarter = 1;
+		number = num;
+		hp = strength[0];
+		aggressivity = attacking[0];
+		location = N+1;
+		stepstep = 0;
+		marching = 1;
+		Blue_headquarter.elements -= hp;
+		Blue_headquarter.number_of_dragon++;
+		morale = (double)Blue_headquarter.elements / (double)strength[0];
+		Weapon0 = new weapon(number % 3, this);
+		beapon0 = 1; beapon1 = 0; beapon2 = 0;
+		if (Weapon0->type == 0 && Weapon0->aggressivity <= 0)
+		{
+			beapon0 = 0;
+			Weapon0 = nullptr;
+		}
+		cout << setw(3) << setfill('0') << hour << ":00 blue dragon " << number << " born" << endl;
+		cout << "Its morale is " << fixed << setprecision(2) << morale << endl;
+	}
+	virtual void yell() //欢呼
+	{
+		cout << setw(3) << setfill('0') << hour << ":40 blue dragon " << number << " yelled in city " << location << endl;
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location--;
+			if(location > 0)
+				cout << setw(3) << setfill('0') << hour << ":10 blue dragon " << number << " marched to city "
+					<< location << " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == 0)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 blue dragon " << number << " reached red headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 red headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+};
+
+class red_ninja :public red_warrior
+{
+public:
+	red_ninja(int num) {
+		type = 1;
+		name = "ninja";
+		headquarter = 0;
+		number = num;
+		hp = strength[1];
+		aggressivity = attacking[1];
+		location = 0;
+		stepstep = 0;
+		marching = 1;
+		Red_headquarter.elements -= hp;
+		Red_headquarter.number_of_ninja++;
+		
+		Weapon1 = new weapon(number % 3, this);
+		Weapon2 = new weapon((number + 1) % 3, this);
+		beapon0 = 0; beapon1 = 1; beapon2 = 1;
+		if (Weapon1->type == 0 && Weapon1->aggressivity <= 0)
+		{
+			beapon1 = 0;
+			Weapon1 = nullptr;
+		}
+		if (Weapon2->type == 0 && Weapon2->aggressivity <= 0)
+		{
+			beapon2 = 0;
+			Weapon2 = nullptr;
+		}
+		cout << setw(3) << setfill('0') << hour << ":00 red ninja " << number << " born" << endl;
+
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location++;
+			if(location < N + 1)
+				cout << setw(3) << setfill('0') << hour << ":10 red ninja " << number << " marched to city " 
+					<< location << " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == N + 1)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 red ninja " << number << " reached blue headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 blue headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+};
+
+class blue_ninja :public blue_warrior
+{
+public:
+	blue_ninja(int num) {
+		type = 1;
+		name = "ninja";
+		headquarter = 1;
+		number = num;
+		hp = strength[1];
+		aggressivity = attacking[1];
+		location = N+1;
+		stepstep = 0;
+		marching = 1;
+		Blue_headquarter.elements -= hp;
+		Blue_headquarter.number_of_ninja++;
+
+		Weapon1 = new weapon(number % 3, this);
+		Weapon2 = new weapon((number + 1) % 3, this);
+		beapon0 = 0; beapon1 = 1; beapon2 = 1;
+		if (Weapon1->type == 0 && Weapon1->aggressivity <= 0)
+		{
+			beapon1 = 0;
+			Weapon1 = nullptr;
+		}
+		if (Weapon2->type == 0 && Weapon2->aggressivity <= 0)
+		{
+			beapon2 = 0;
+			Weapon2 = nullptr;
+		}
+
+		cout << setw(3) << setfill('0') << hour << ":00 blue ninja " << number << " born" << endl;
+
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location--;
+			if(location > 0)
+				cout << setw(3) << setfill('0') << hour << ":10 blue ninja " << number << " marched to city "
+					<< location << " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == 0)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 blue ninja " << number << " reached red headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 red headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+};
+
+class red_iceman :public red_warrior
+{
+public:
+	red_iceman(int num) {
+		type = 2;
+		name = "iceman";
+		headquarter = 0;
+		number = num;
+		hp = strength[2];
+		aggressivity = attacking[2];
+		location = 0;
+		stepstep = 0;
+		marching = 1;
+		Red_headquarter.elements -= hp;
+		Red_headquarter.number_of_iceman++;
+		
+		Weapon0 = new weapon(number % 3, this);
+		beapon0 = 1; beapon1 = 0; beapon2 = 0;
+		if (Weapon0->type == 0 && Weapon0->aggressivity <= 0)
+		{
+			beapon0 = 0;
+			Weapon0 = nullptr;
+		}
+		cout << setw(3) << setfill('0') << hour << ":00 red iceman " << number << " born" << endl;
+
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location++;
+			hp = hp - (int)(hp / 10);
+			if(location < N + 1)
+				cout << setw(3) << setfill('0') << hour << ":10 red iceman " << number << " marched to city " 
+					<< location << " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == N + 1)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 red iceman " << number << " reached blue headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 blue headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+
+};
+
+class blue_iceman :public blue_warrior
+{
+public:
+	blue_iceman(int num) {
+		type = 2;
+		name = "iceman";
+		headquarter = 1;
+		number = num;
+		hp = strength[2];
+		aggressivity = attacking[2];
+		location = N+1;
+		stepstep = 0;
+		marching = 1;
+		Blue_headquarter.elements -= hp;
+		Blue_headquarter.number_of_iceman++;
+		
+		Weapon0 = new weapon(number % 3, this);
+		beapon0 = 1; beapon1 = 0; beapon2 = 0;
+		if (Weapon0->type == 0 && Weapon0->aggressivity <= 0)
+		{
+			beapon0 = 0;
+			Weapon0 = nullptr;
+		}
+		cout << setw(3) << setfill('0') << hour << ":00 blue iceman " << number << " born" << endl;
+
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location--;
+			hp = hp - (int)(hp / 10);
+			if(location > 0)
+				cout << setw(3) << setfill('0') << hour << ":10 blue iceman " << number << " marched to city "
+					<< location << " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == 0)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 blue iceman " << number << " reached red headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 red headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+
+};
+
+class red_lion :public red_warrior
+{
+public:
+	red_lion(int num) {
+		type = 3;
+		name = "lion";
+		headquarter = 0;
+		number = num;
+		hp = strength[3];
+		aggressivity = attacking[3];
+		location = 0;
+		stepstep = 0;
+		marching = 1;
+		Red_headquarter.elements -= hp;
+		loyalty = Red_headquarter.elements;
+		Red_headquarter.number_of_lion++;
+		beapon0 = 0; beapon1 = 0; beapon2 = 0;
+
+		cout << setw(3) << setfill('0') << hour << ":00 red lion " << number << " born" << endl;
+		cout << "Its loyalty is " << loyalty << endl;
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location++;
+			loyalty -= K;
+			if(location < N + 1)
+				cout << setw(3) << setfill('0') << hour << ":10 red lion " << number << " marched to city " 
+					<< location << " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == N + 1)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 red lion " << number << " reached blue headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 blue headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+	virtual void run_away() //逃跑
+	{
+		if (loyalty <= 0) {
+			cout << setw(3) << setfill('0') << hour << ":05 red lion " << number << " ran away" << endl;
+			hp = -1;
+			delete this;
+		}
+	}
+};
+
+class blue_lion :public blue_warrior
+{
+public:
+	blue_lion(int num) {
+		type = 3;
+		name = "lion";
+		headquarter = 1;
+		number = num;
+		hp = strength[3];
+		aggressivity = attacking[3];
+		location = N+1;
+		stepstep = 0;
+		marching = 1;
+		Blue_headquarter.elements -= hp;
+		loyalty = Blue_headquarter.elements;
+		Blue_headquarter.number_of_lion++;
+		beapon0 = 0; beapon1 = 0; beapon2 = 0;
+		
+		cout << setw(3) << setfill('0') << hour << ":00 blue lion " << number << " born" << endl;
+		cout << "Its loyalty is " << loyalty << endl;
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location--;
+			loyalty -= K;
+			if(location > 0)
+				cout << setw(3) << setfill('0') << hour << ":10 blue lion " << number << " marched to city "
+					<< location << " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == 0)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 blue lion " << number << " reached red headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 red headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+	void run_away() //逃跑
+	{
+
+	}
+};
+
+class red_wolf :public red_warrior
+{
+public:
+	red_wolf(int num) {
+		type = 4;
+		name = "wolf";
+		headquarter = 0;
+		number = num;
+		hp = strength[4];
+		aggressivity = attacking[4];
+		location = 0;
+		stepstep = 0;
+		marching = 1;
+		Red_headquarter.elements -= hp;
+		Red_headquarter.number_of_wolf++;
+		beapon0 = 0; beapon1 = 0; beapon2 = 0;
+		
+		cout << setw(3) << setfill('0') << hour << ":00 red wolf " << number << " born" << endl;
+
+	}
+	virtual void snatch() //抢夺（武器）
+	{
+		
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location++;
+			if(location < N + 1)
+				cout << setw(3) << setfill('0') << hour << ":10 red wolf " << number << " marched to city " << location
+					<< " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == N + 1)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 red wolf " << number << " reached blue headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 blue headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+};
+
+class blue_wolf :public blue_warrior
+{
+public:
+	blue_wolf(int num) {
+		type = 4;
+		name = "wolf";
+		headquarter = 1;
+		number = num;
+		hp = strength[4];
+		aggressivity = attacking[4];
+		location = N + 1;
+		stepstep = 0;
+		marching = 1;
+		Blue_headquarter.elements -= hp;
+		Blue_headquarter.number_of_wolf++;
+		beapon0 = 0; beapon1 = 0; beapon2 = 0;
+
+		cout << setw(3) << setfill('0') << hour << ":00 blue wolf " << number << " born" << endl;
+
+	}
+	virtual void snatch() //抢夺（武器）
+	{
+		
+	}
+	virtual void step() //前进
+	{
+		if (marching == 1)
+		{
+			location--;
+			if(location > 0)
+				cout << setw(3) << setfill('0') << hour << ":10 blue wolf " << number << " marched to city " << location
+					<< " with " << hp << " elements and force " << aggressivity << endl;
+			if (location == 0)
+			{
+				cout << setw(3) << setfill('0') << hour << ":10 blue wolf " << number << " reached red headquarter with " 
+					<< hp << " elements and force " << aggressivity << endl;
+				cout << setw(3) << setfill('0') << hour << ":10 red headquarter was taken" << endl;
+				over = 1;
+			}
+		}
+		marching = 0;
+	}
+};
+
+
+
+//weapon::成员函数
+weapon::weapon(int _type, warrior* w) {
+	host = w;
+	type = _type;
+	switch (_type) {
+	case 0: {name = "sword"; break; }
+	case 1: {name = "bomb"; break; }
+	case 2: {name = "arrow"; break; }
+	default: {cout << "????" << endl; break; }
+	}
+	aggressivity = w->aggressivity / 5;
+	durability = 3;
+	R = RR;
+}
+void weapon::use_weapon() {
+	if (type == 0) {
+		aggressivity = aggressivity * 4 / 5;
+		if (aggressivity <= 0) {
+			if (host->beapon0 == 1 && host->Weapon0->type == type) {
+				host->beapon0 = 0;
+				host->Weapon0 = nullptr;
+			}
+			else if (host->beapon1 == 1 && host->Weapon1->type == type) {
+				host->beapon1 = 0;
+				host->Weapon1 = nullptr;
+			}
+			else if (host->beapon2 == 1 && host->Weapon2->type == type) {
+				host->beapon2 = 0;
+				host->Weapon2 = nullptr;
+			}
+			else if (host->Weapon.size() > 0)
+				host->Weapon.erase(this);
+			delete this;
+		}
+
+	}
+	else if (type == 2) {
+		durability--;
+		if (durability <= 0) {
+			if (host->beapon0 == 1 && host->Weapon0->type == type) {
+				host->beapon0 = 0;
+				host->Weapon0 = nullptr;
+			}
+			else if (host->beapon1 == 1 && host->Weapon1->type == type) {
+				host->beapon1 = 0;
+				host->Weapon1 = nullptr;
+			}
+			else if (host->beapon2 == 1 && host->Weapon2->type == type) {
+				host->beapon2 = 0;
+				host->Weapon2 = nullptr;
+			}
+			else if (host->Weapon.size() > 0)
+				host->Weapon.erase(this);
+			delete this;
+		}
+	}
+}
+
+//city::成员函数
+int city::find_the_red_warrior_in_the_city(int location)//找到某个城市中的红武士并返回其编号
+{
+	for (int i = 1; i < red; ++i)
+		if (Red_warrior[i] != nullptr && Red_warrior[i]->hp > -999 && (*Red_warrior[i]).location == location)
+			return i;
+	return -1;
+}
+int city::find_the_blue_warrior_in_the_city(int location)//找到某个城市中的蓝武士并返回其编号
+{
+	for (int i = 1; i < blue; ++i)
+		if (Blue_warrior[i] != nullptr && Blue_warrior[i]->hp > -999 && (*Blue_warrior[i]).location == location)
+			return i;
+	return -1;
+}
+int city::alive_find_the_red_warrior_in_the_city(int location)//找到某个城市中的红武士并返回其编号
+{
+	for (int i = 1; i < red; ++i)
+		if (Red_warrior[i] != nullptr && Red_warrior[i]->hp > 0 && (*Red_warrior[i]).location == location)
+			return i;
+	return -1;
+}
+int city::alive_find_the_blue_warrior_in_the_city(int location)//找到某个城市中的蓝武士并返回其编号
+{
+	for (int i = 1; i < blue; ++i)
+		if (Blue_warrior[i] != nullptr && Blue_warrior[i]->hp > 0 && (*Blue_warrior[i]).location == location)
+			return i;
+	return -1;
+}
+
+int city::number_of_all_the_warriors_in_the_city(int location)
+{
+	int num = 0;
+	for (int i = 1; i < red; ++i)
+		if (Red_warrior[i] != nullptr && (*Red_warrior[i]).location == location)
+			num++;
+	for (int i = 1; i < blue; ++i)
+		if (Blue_warrior[i] != nullptr && (*Blue_warrior[i]).location == location)
+			num++;
+	return num;
+}
+int city::alive_number_of_all_the_warriors_in_the_city(int location)
+{
+	int num = 0;
+	for (int i = 1; i < red; ++i)
+		if (Red_warrior[i] != nullptr && Red_warrior[i]->hp > -999 && (*Red_warrior[i]).location == location)
+			num++;
+	for (int i = 1; i < blue; ++i)
+		if (Blue_warrior[i] != nullptr && Blue_warrior[i]-> hp > -999 && (*Blue_warrior[i]).location == location)
+			num++;
+	return num;
+}
+int city::alive_number_of_all_the_red_warriors_in_the_city(int location)
+{
+	int num = 0;
+	for (int i = 1; i < red; ++i)
+		if (Red_warrior[i] != nullptr && Red_warrior[i]->hp > 0 && (*Red_warrior[i]).location == location)
+		{
+			num++;
+			//if(location==1)cout << Red_warrior[i]->name << endl;
+		}
+
+	return num;
+}
+int city::alive_number_of_all_the_blue_warriors_in_the_city(int location)
+{
+	int num = 0;
+	for (int i = 1; i < blue; ++i)
+		if (Blue_warrior[i] != nullptr && Blue_warrior[i]->hp > 0 && (*Blue_warrior[i]).location == location)
+			num++;
+	return num;
+}
+
+int city::number_of_all_the_red_warriors_in_the_city(int location)
+{
+	int num = 0;
+	for (int i = 1; i < red; ++i)
+		if (Red_warrior[i] != nullptr && Red_warrior[i]->hp > -999 && (*Red_warrior[i]).location == location)
+		{
+			num++;
+			//if(location==1)cout << Red_warrior[i]->name << endl;
+		}
+			
+	return num;
+}
+int city::number_of_all_the_blue_warriors_in_the_city(int location)
+{
+	int num = 0;
+	for (int i = 1; i < blue; ++i)
+		if (Blue_warrior[i] != nullptr && Blue_warrior[i]->hp > -999 && (*Blue_warrior[i]).location == location)
+			num++;
+	return num;
+}
+
+
+int city::battle(int location)//开始战斗,返回值为获胜的武士
+{
+	
+	if (!(number_of_all_the_red_warriors_in_the_city(location) == 1 && number_of_all_the_blue_warriors_in_the_city(location) == 1))
+		return -9;//如果不满足“该城市中恰好有一红一蓝两个武士”，则不满足条件，不会发生战斗
+	int A = find_the_red_warrior_in_the_city(location);
+	int B = find_the_blue_warrior_in_the_city(location);//先搞清楚此城市中是红方的A与蓝方的B发生战斗
+	
+	//注：此处不考虑放箭、炸弹同归于尽
+	//战前：检查是否有人放箭以及放箭带来的结果
+	//cout << "Red_warrior[A]->hp==" << Red_warrior[A]->hp << "Blue_warrior[B]->hp==" << Blue_warrior[B]->hp << endl;
+	if (Red_warrior[A]->hp <= 0 && Blue_warrior[B]->hp > 0) {  //蓝胜
+		if (Blue_warrior[B]->type == 0) {
+			Blue_warrior[B]->morale += 0.2;
+			if (Blue_warrior[B]->morale > 0.8 && ((flag == 1) || (flag == -1 && (number % 2 == 0)))) {
+				Blue_warrior[B]->yell();
+			}
+		}
+		if (Blue_warrior[B]->type == 4) {
+			if (Blue_warrior[B]->aggressivity_of_find_sword() <= 0 && Red_warrior[A]->aggressivity_of_find_sword() > 0)
+				(Blue_warrior[B]->Weapon).insert(Red_warrior[A]->find_sword());
+			if (Blue_warrior[B]->existance_of_find_bomb() <= 0 && Red_warrior[A]->existance_of_find_bomb() > 0)
+				(Blue_warrior[B]->Weapon).insert(Red_warrior[A]->find_bomb());
+			if (Blue_warrior[B]->durability_of_find_arrow() <= 0 && Red_warrior[A]->durability_of_find_arrow() > 0)
+				(Blue_warrior[B]->Weapon).insert(Red_warrior[A]->find_arrow());
+		}
+		cout << setw(3) << setfill('0') << hour << ":40 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number
+			<< " earned " << City[location]->element << " elements for his headquarter" << endl;
+		blue_gift.push_back(Blue_warrior[B]); //cout << "----------" << Blue_warrior[B]->name << "----------" << endl;
+		blue_harvest.push_back(this); //cout << "$$$$$$$$$$" << Blue_warrior[B]->name << "$$$$$$$$$$" << endl;
+		RESULT.push_back(1);
+		if (RESULT.size() > 1) {
+			vector<int>::iterator ite = --RESULT.end();
+			if ((*ite) == 1 && (*(ite - 1) == 1) && flag != 1) {
+				flag = 1;
+				cout << setw(3) << setfill('0') << hour << ":40 blue flag raised in city " << number << endl;
+			}
+		}		
+		return 1;
+	}
+	else if (Red_warrior[A]->hp > 0 && Blue_warrior[B]->hp <= 0) {   //红胜
+		if (Red_warrior[A]->type == 0) {
+			Red_warrior[A]->morale += 0.2;
+			if (Red_warrior[A]->morale > 0.8 && ((flag == 0) || (flag == -1 && (number % 2 == 1)))) {
+				Red_warrior[A]->yell();
+			}
+		}
+		if (Red_warrior[A]->type == 4) {
+			if (Red_warrior[A]->aggressivity_of_find_sword() <= 0 && Blue_warrior[B]->aggressivity_of_find_sword() > 0)
+				(Red_warrior[A]->Weapon).insert(Blue_warrior[B]->find_sword());
+			if (Red_warrior[A]->existance_of_find_bomb() <= 0 && Blue_warrior[B]->existance_of_find_bomb() > 0)
+				(Red_warrior[A]->Weapon).insert(Blue_warrior[B]->find_bomb());
+			if (Red_warrior[A]->durability_of_find_arrow() <= 0 && Blue_warrior[B]->durability_of_find_arrow() > 0)
+				(Red_warrior[A]->Weapon).insert(Blue_warrior[B]->find_arrow());
+		}
+		cout << setw(3) << setfill('0') << hour << ":40 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number
+			<< " earned " << City[location]->element << " elements for his headquarter" << endl;
+		red_gift.push_back(Red_warrior[A]); //cout << "**********" << Red_warrior[A] << "**********" << endl;
+		red_harvest.push_back(this); //cout << "@@@@@@@@@@" << Red_warrior[A] << "@@@@@@@@@@" << endl;
+		RESULT.push_back(0);
+		if (RESULT.size() > 1) {
+			vector<int>::iterator ite = --RESULT.end();
+			if ((*ite) == 0 && (*(ite - 1) == 0) && flag != 0) {
+				flag = 0;
+				cout << setw(3) << setfill('0') << hour << ":40 red flag raised in city " << number << endl;
+			}
+		}
+		return 0;
+	}
+	else if (Red_warrior[A]->hp <= 0 && Blue_warrior[B]->hp <= 0) {   //同归于尽
+		
+		return -1;
+	}
+	else {     //双方都活着，进入“战中”
+
+	}
+	//战中：
+	int tmpA = Red_warrior[A]->hp; int tmpB = Blue_warrior[B]->hp;
+	if ((flag == 0) || (flag == -1 && (number % 2 == 1)))//红武士主动进攻
+	{
+		cout << setw(3) << setfill('0') << hour << ":40 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number << " attacked blue "
+			<< Blue_warrior[B]->name << " " << Blue_warrior[B]->number << " in city " << Red_warrior[A]->location << " with "
+			<< Red_warrior[A]->hp << " elements and force " << Red_warrior[A]->aggressivity << endl;
+		Blue_warrior[B]->hp -= Red_warrior[A]->aggressivity;
+		if (Red_warrior[A]->aggressivity_of_find_sword() > 0) {
+			Blue_warrior[B]->hp -= Red_warrior[A]->aggressivity_of_find_sword();
+			(Red_warrior[A]->find_sword())->use_weapon();
+		}
+			
+		if (Blue_warrior[B]->hp > 0 && Blue_warrior[B]->type != 1) { //蓝武士反击
+			cout << setw(3) << setfill('0') << hour << ":40 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number 
+				<< " fought back against red "<< Red_warrior[A]->name << " " << Red_warrior[A]->number << " in city " 
+				<< Blue_warrior[B]->location << endl;
+			Red_warrior[A]->hp -= Blue_warrior[B]->aggressivity / 2;
+			if (Blue_warrior[B]->aggressivity_of_find_sword() > 0) {
+				Red_warrior[A]->hp -= Blue_warrior[B]->aggressivity_of_find_sword();
+				(Blue_warrior[B]->find_sword())->use_weapon();
+			}
+		}
+	}
+	else if ((flag == 1) || (flag == -1 && (number % 2 == 0)))//蓝武士主动进攻
+	{
+		cout << setw(3) << setfill('0') << hour << ":40 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number << " attacked red "
+			<< Red_warrior[A]->name << " " << Red_warrior[A]->number << " in city " << Blue_warrior[B]->location << " with "
+			<< Blue_warrior[B]->hp << " elements and force " << Blue_warrior[B]->aggressivity << endl;
+		Red_warrior[A]->hp -= Blue_warrior[B]->aggressivity;
+		if (Blue_warrior[B]->aggressivity_of_find_sword() > 0) {
+			Red_warrior[A]->hp -= Blue_warrior[B]->aggressivity_of_find_sword();
+			(Blue_warrior[B]->find_sword())->use_weapon();
+		}
+		if (Red_warrior[A]->hp > 0 && Red_warrior[A]->type != 1) { //红武士反击
+			cout << setw(3) << setfill('0') << hour << ":40 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number
+				<< " fought back against blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number << " in city "
+				<< Red_warrior[A]->location << endl;
+			Blue_warrior[B]->hp -= Red_warrior[A]->aggressivity / 2;
+			if (Red_warrior[A]->aggressivity_of_find_sword() > 0) {
+				Blue_warrior[B]->hp -= Red_warrior[A]->aggressivity_of_find_sword();
+				(Red_warrior[A]->find_sword())->use_weapon();
+			}
+		}
+	}
+	else {
+		cout << "真是见鬼了" << endl;
+	}
+
+	//战后：
+	if (Red_warrior[A]->hp <= 0 && Blue_warrior[B]->hp > 0) {   //蓝胜
+		cout << setw(3) << setfill('0') << hour << ":40 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number
+			<< " was killed in city " << Red_warrior[A]->location << endl;
+		if (Blue_warrior[B]->type == 0) {
+			Blue_warrior[B]->morale += 0.2;
+			if (Blue_warrior[B]->morale > 0.8 && ((flag == 1) || (flag == -1 && (number % 2 == 0)))) {
+				Blue_warrior[B]->yell();
+			}
+		}
+		if (Red_warrior[A]->type == 3) {
+			Blue_warrior[B]->hp += tmpA;
+		}
+		if (Blue_warrior[B]->type == 4) {
+			if (Blue_warrior[B]->aggressivity_of_find_sword() <= 0 && Red_warrior[A]->aggressivity_of_find_sword() > 0) {
+				(Blue_warrior[B]->Weapon).insert(Red_warrior[A]->find_sword());
+			}
+			if (Blue_warrior[B]->existance_of_find_bomb() <= 0 && Red_warrior[A]->existance_of_find_bomb() > 0) {
+				(Blue_warrior[B]->Weapon).insert(Red_warrior[A]->find_bomb());
+			}
+			if (Blue_warrior[B]->durability_of_find_arrow() <= 0 && Red_warrior[A]->durability_of_find_arrow() > 0) {
+				(Blue_warrior[B]->Weapon).insert(Red_warrior[A]->find_arrow());
+			}
+		}
+		cout << setw(3) << setfill('0') << hour << ":40 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number
+			<< " earned " << City[location]->element << " elements for his headquarter" << endl;
+		//Blue_headquarter.elements += City[location]->element;
+		//City[location]->element = 0;
+		blue_gift.push_back(Blue_warrior[B]);
+		blue_harvest.push_back(this);
+		RESULT.push_back(1);
+		if (RESULT.size() > 1) {
+			vector<int>::iterator ite = --RESULT.end();
+			if ((*ite) == 1 && (*(ite - 1) == 1) && flag != 1) {
+				flag = 1;
+				cout << setw(3) << setfill('0') << hour << ":40 blue flag raised in city " << number << endl;
+			}
+		}
+		return 1;
+	}
+	else if (Red_warrior[A]->hp > 0 && Blue_warrior[B]->hp <= 0) {  //红胜
+		cout << setw(3) << setfill('0') << hour << ":40 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number
+			<< " was killed in city " << Blue_warrior[B]->location << endl;
+		if (Red_warrior[A]->type == 0) {
+			Red_warrior[A]->morale += 0.2;
+			if (Red_warrior[A]->morale > 0.8 && ((flag == 0) || (flag == -1 && (number % 2 == 1)))) {
+				Red_warrior[A]->yell();
+			}
+		}
+		if (Blue_warrior[B]->type == 3) {
+			Red_warrior[A]->hp += tmpB;
+		}
+		if (Red_warrior[A]->type == 4) {
+			if (Red_warrior[A]->aggressivity_of_find_sword() <= 0 && Blue_warrior[B]->aggressivity_of_find_sword() > 0)
+				(Red_warrior[A]->Weapon).insert(Blue_warrior[B]->find_sword());
+			if (Red_warrior[A]->existance_of_find_bomb() <= 0 && Blue_warrior[B]->existance_of_find_bomb() > 0)
+				(Red_warrior[A]->Weapon).insert(Blue_warrior[B]->find_bomb());
+			if (Red_warrior[A]->durability_of_find_arrow() <= 0 && Blue_warrior[B]->durability_of_find_arrow() > 0)
+				(Red_warrior[A]->Weapon).insert(Blue_warrior[B]->find_arrow());
+		}
+		cout << setw(3) << setfill('0') << hour << ":40 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number
+			<< " earned " << City[location]->element << " elements for his headquarter" << endl;
+		//Red_headquarter.elements += City[location]->element;
+		//City[location]->element = 0;
+		red_gift.push_back(Red_warrior[A]);
+		red_harvest.push_back(this);
+		RESULT.push_back(0);
+		if (RESULT.size() > 1) {
+			vector<int>::iterator ite = --RESULT.end();
+			if ((*ite) == 0 && (*(ite - 1) == 0) && flag != 0) {
+				flag = 0;
+				cout << setw(3) << setfill('0') << hour << ":40 red flag raised in city " << number << endl;
+			}
+		}
+		return 0;
+	}
+	else if (Red_warrior[A]->hp <= 0 && Blue_warrior[B]->hp <= 0) {  //双方均死
+		cout << "我觉得不可能出现这种情况吧？" << endl;
+		return -1;
+	}
+	else if (Red_warrior[A]->hp > 0 && Blue_warrior[B]->hp > 0) {   //双方均活
+		RESULT.push_back(-1);
+		if (Red_warrior[A]->type == 0) {
+			Red_warrior[A]->morale -= 0.2;
+			if (Red_warrior[A]->morale > 0.8 && ((flag == 0) || (flag == -1 && (number % 2 == 1)))) {
+				Red_warrior[A]->yell();
+			}
+		}
+		if (Blue_warrior[B]->type == 0) {
+			Blue_warrior[B]->morale -= 0.2;
+			if (Blue_warrior[B]->morale > 0.8 && ((flag == 1) || (flag == -1 && (number % 2 == 0)))) {
+				Blue_warrior[B]->yell();
+			}
+		}
+		if (Red_warrior[A]->type == 3)
+			Red_warrior[A]->loyalty -= K;
+		if (Blue_warrior[B]->type == 3)
+			Blue_warrior[B]->loyalty -= K;
+
+		return -1;
+	}
+	cout << "这可太见鬼了" << endl;
+	return -9;
+}
+void city::shot(int location) {
+	if (number_of_all_the_red_warriors_in_the_city(location) == 1 && alive_number_of_all_the_blue_warriors_in_the_city(location + 1) == 1 && location <= N) {
+		int A = find_the_red_warrior_in_the_city(location);
+		int B = alive_find_the_blue_warrior_in_the_city(location + 1);
+		if (Blue_warrior[B]->hp <= 0)
+			return;
+		if (Red_warrior[A]->durability_of_find_arrow() > 0) {
+			cout << setw(3) << setfill('0') << hour << ":35 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number << " shot";
+			Blue_warrior[B]->hp -= Red_warrior[A]->find_arrow()->R;
+			if (Blue_warrior[B]->hp <= 0)
+				cout << " and killed blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number;
+			Red_warrior[A]->find_arrow()->use_weapon();
+			cout << endl;
+		}
+	}
+	if (number_of_all_the_blue_warriors_in_the_city(location) == 1 && alive_number_of_all_the_red_warriors_in_the_city(location - 1) == 1 && location >= 1) {
+		int A = alive_find_the_red_warrior_in_the_city(location - 1);
+		int B = find_the_blue_warrior_in_the_city(location);
+		
+		if (Red_warrior[A]->hp <= 0)
+			return;
+		if (Blue_warrior[B]->durability_of_find_arrow() > 0) {
+			cout << setw(3) << setfill('0') << hour << ":35 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number << " shot";
+			Red_warrior[A]->hp -= Blue_warrior[B]->find_arrow()->R;
+			if (Red_warrior[A]->hp <= 0)
+				cout << " and killed red " << Red_warrior[A]->name << " " << Red_warrior[A]->number;
+			Blue_warrior[B]->find_arrow()->use_weapon();
+			cout << endl;
+		}
+	}
+	else
+		return;
+}
+void city::suicide(int location) {
+	if (!(alive_number_of_all_the_red_warriors_in_the_city(location) == 1 && alive_number_of_all_the_blue_warriors_in_the_city(location) == 1))
+		return;    //如果不满足“该城市中恰好有一红一蓝两个武士”，则不满足条件，不会发生“同归于尽”事件
+	int A = alive_find_the_red_warrior_in_the_city(location);
+	int B = alive_find_the_blue_warrior_in_the_city(location);//先搞清楚此城市中是红方的A与蓝方的B
+	
+	if (Red_warrior[A]->hp <= 0 || Blue_warrior[B]->hp <= 0)
+		return;
+	if ((flag == 0) || (flag == -1 && (number % 2 == 1)))//若本应红武士主动进攻
+	{
+		int tempA = (Red_warrior[A]->aggressivity_of_find_sword() > 0) ? (Red_warrior[A]->aggressivity_of_find_sword()) : 0;
+		int tempB = (Blue_warrior[B]->aggressivity_of_find_sword() > 0) ? (Blue_warrior[B]->aggressivity_of_find_sword()) : 0;
+		if ((Blue_warrior[B]->hp - Red_warrior[A]->aggressivity - tempA <= 0)&&(Blue_warrior[B]->existance_of_find_bomb() == 1)) {
+			cout << setw(3) << setfill('0') << hour << ":38 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number
+				<< " used a bomb and killed red " << Red_warrior[A]->name << " " << Red_warrior[A]->number << endl;
+			Red_warrior[A] = nullptr;
+			Blue_warrior[B] = nullptr;
+			return;
+		}
+
+		if ((Blue_warrior[B]->hp - Red_warrior[A]->aggressivity - tempA > 0) &&(Blue_warrior[B]->type!=1)&& (Red_warrior[A]->hp - Blue_warrior[B]->aggressivity / 2 - tempB <= 0) && (Red_warrior[A]->existance_of_find_bomb() == 1)) {
+			cout << setw(3) << setfill('0') << hour << ":38 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number
+				<< " used a bomb and killed blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number << endl;
+			Red_warrior[A] = nullptr;
+			Blue_warrior[B] = nullptr;
+			return;
+		}
+	}
+	else if ((flag == 1) || (flag == -1 && (number % 2 == 0)))//若本应蓝武士主动进攻
+	{
+		int tempA = (Red_warrior[A]->aggressivity_of_find_sword() > 0) ? (Red_warrior[A]->aggressivity_of_find_sword()) : 0;
+		int tempB = (Blue_warrior[B]->aggressivity_of_find_sword() > 0) ? (Blue_warrior[B]->aggressivity_of_find_sword()) : 0;
+
+		if ((Red_warrior[A]->hp - Blue_warrior[B]->aggressivity - tempB <= 0) && (Red_warrior[A]->existance_of_find_bomb() == 1)) {
+			cout << setw(3) << setfill('0') << hour << ":38 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number
+				<< " used a bomb and killed blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number << endl;
+			Red_warrior[A] = nullptr;
+			Blue_warrior[B] = nullptr;
+			return;
+		}
+		if ((Red_warrior[A]->hp - Blue_warrior[B]->aggressivity - tempB > 0) && (Red_warrior[A]->type != 1) && (Blue_warrior[B]->hp - Red_warrior[A]->aggressivity / 2 - tempA <= 0) && (Blue_warrior[B]->existance_of_find_bomb() == 1)) {
+			cout << setw(3) << setfill('0') << hour << ":38 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number
+				<< " used a bomb and killed red " << Red_warrior[A]->name << " " << Red_warrior[A]->number << endl;
+			Red_warrior[A] = nullptr;
+			Blue_warrior[B] = nullptr;
+			return;
+		}
+
+	}
+}
+
+//red_headquarter::成员函数
+void red_headquarter::produce_warriors() {
+	if (strength[red_current_warrior_type] > elements)
+	{
+		return;
+	}
+	if (red_producing)//开始制造武士，制造顺序：23410
+	{
+		int total_number_of_warriors = number_of_dragon + number_of_ninja + number_of_iceman + number_of_lion + number_of_wolf;
+		switch (red_current_warrior_type)
+		{
+		case 0: {Red_warrior[red] = new red_dragon(total_number_of_warriors + 1); break; }
+		case 1: {Red_warrior[red] = new red_ninja(total_number_of_warriors + 1); break; }
+		case 2: {Red_warrior[red] = new red_iceman(total_number_of_warriors + 1); break; }
+		case 3: {Red_warrior[red] = new red_lion(total_number_of_warriors + 1); break; }
+		case 4: {Red_warrior[red] = new red_wolf(total_number_of_warriors + 1); break; }
+		default: {cout << "错误类型0" << endl; break; }
+		}
+		red++;
+		switch (red_current_warrior_type)
+		{
+		case 2: {red_current_warrior_type = 3; break; }
+		case 3: {red_current_warrior_type = 4; break; }
+		case 4: {red_current_warrior_type = 1; break; }
+		case 1: {red_current_warrior_type = 0; break; }
+		case 0: {red_current_warrior_type = 2; break; }
+		default: {cout << "错误类型1" << endl; break; }
+		}
+	}
+}
+//blue_headquarter::成员函数
+void blue_headquarter::produce_warriors() {
+	if (strength[blue_current_warrior_type] > elements)
+	{
+		return;
+	}
+	if (blue_producing)//开始制造武士，制造顺序：30124
+	{
+		int total_number_of_warriors = number_of_dragon + number_of_ninja + number_of_iceman + number_of_lion + number_of_wolf;
+		switch (blue_current_warrior_type)
+		{
+		case 0: {Blue_warrior[blue] = new blue_dragon(total_number_of_warriors + 1); break; }
+		case 1: {Blue_warrior[blue] = new blue_ninja(total_number_of_warriors + 1); break; }
+		case 2: {Blue_warrior[blue] = new blue_iceman(total_number_of_warriors + 1); break; }
+		case 3: {Blue_warrior[blue] = new blue_lion(total_number_of_warriors + 1); break; }
+		case 4: {Blue_warrior[blue] = new blue_wolf(total_number_of_warriors + 1); break; }
+		default: {cout << "错误类型00" << endl; break; }
+		}
+		blue++;
+		switch (blue_current_warrior_type)
+		{
+		case 3: {blue_current_warrior_type = 0; break; }
+		case 0: {blue_current_warrior_type = 1; break; }
+		case 1: {blue_current_warrior_type = 2; break; }
+		case 2: {blue_current_warrior_type = 4; break; }
+		case 4: {blue_current_warrior_type = 3; break; }
+		default: {cout << "错误类型11" << endl; break; }
+		}
+	}
+}
+
+
+//******************************************** 这是一道可以逾越的鸿沟 ******************************************** 这是一道可以逾越的鸿沟 ****************************************
+
+
+int Time = 0;
+
+int main()
+{
+	int numberOfDataSets;
+	cin >> numberOfDataSets;
+	for (int n = 0; n < numberOfDataSets; ++n)
+	{
+		cin >> M >> N >> RR >> K >> T;
+		for (int i = 0; i < 5; ++i)
+			cin >> strength[i];
+		for (int i = 0; i < 5; ++i)
+			cin >> attacking[i];
+
+		
+		for (int loc = 0; loc <= N + 1; ++loc)
+		{
+			City[loc] = new city(loc);
+		}
+
+		cout << "Case " << n + 1 <<":" << endl;
+
+		//做好初始化工作：
+		
+		Red_headquarter.elements = M;
+		Blue_headquarter.elements = M;
+		Red_headquarter.red_producing = 1;
+		Blue_headquarter.blue_producing = 1;
+
+		Red_headquarter.enemy = 0;
+		Blue_headquarter.enemy = 0;
+
+		Red_headquarter.number_of_dragon = 0;
+		Red_headquarter.number_of_ninja = 0;
+		Red_headquarter.number_of_iceman = 0;
+		Red_headquarter.number_of_lion = 0;
+		Red_headquarter.number_of_wolf = 0;
+		Blue_headquarter.number_of_dragon = 0;
+		Blue_headquarter.number_of_ninja = 0;
+		Blue_headquarter.number_of_iceman = 0;
+		Blue_headquarter.number_of_lion = 0;
+		Blue_headquarter.number_of_wolf = 0;
+
+		over = 0; red = 1; blue = 1;
+		red_current_warrior_type = 2;
+		blue_current_warrior_type = 3;
+		red_gift.clear();
+		blue_gift.clear();
+		red_harvest.clear();
+		blue_harvest.clear();
+
+		for (hour = 0; hour <= T / 60; hour++)
+		{
+			//00分：武士降生
+			Red_headquarter.produce_warriors();
+			Blue_headquarter.produce_warriors();
+
+			if (hour * 60 + 5 > T)
+				break;
+
+			//05分：lion逃跑
+			for (int loc = 0; loc <= N + 1; ++loc)
+			{
+				int a = City[loc]->find_the_red_warrior_in_the_city(loc);
+				int b = City[loc]->find_the_blue_warrior_in_the_city(loc);
+				if(a > 0)
+					if ((*Red_warrior[a]).type == 3 && (*Red_warrior[a]).hp > 0) {
+						(*Red_warrior[a]).run_away();
+					}
+				if(b > 0)
+					if ((*Blue_warrior[b]).type == 3 && (*Blue_warrior[b]).hp > 0) {
+						(*Blue_warrior[b]).run_away();
+					}
+			}
+
+			if (hour * 60 + 10 > T)
+				break;
+
+			//10分：武士前进
+			for (int loc = 0; loc <= N + 1; ++loc)
+			{
+				for (int i = 1; i < red; ++i) {
+					
+					if (Red_warrior[i] != nullptr && Red_warrior[i]->hp > 0 && (*Red_warrior[i]).marching && (*Red_warrior[i]).location == loc - 1)
+						(*Red_warrior[i]).step();
+				}
+				for (int j = 1; j < blue; ++j) {
+					if (Blue_warrior[j] != nullptr && Blue_warrior[j]->hp > 0 && (*Blue_warrior[j]).marching && (*Blue_warrior[j]).location == loc + 1)
+						(*Blue_warrior[j]).step();
+				}
+			}
+			for (int i = 1; i < red; ++i)
+				if (Red_warrior[i] != nullptr)
+					Red_warrior[i]->marching = 1;
+			for (int j = 1; j < blue; ++j)
+				if(Blue_warrior[j] != nullptr)
+					Blue_warrior[j]->marching = 1;
+
+			if (over)/////////////////////////////////////////////////////////重中之重
+				break;////////////////////////////////////////////////////////重中之重
+
+			if (hour * 60 + 20 > T)
+				break;
+			//20分：每个城市产出10个生命元
+			for (int loc = 1; loc < N + 1; ++loc) {
+				City[loc]->element += 10;
+			}
+
+
+			if (hour * 60 + 30 > T)
+				break;
+			//30分：城市中的单个武士取走生命元
+			for (int loc = 1; loc < N + 1; ++loc)
+			{
+				if (City[loc]->alive_number_of_all_the_warriors_in_the_city(loc) == 1)
+				{
+					if (City[loc]->alive_number_of_all_the_red_warriors_in_the_city(loc) == 1)
+					{
+						int A = City[loc]->alive_find_the_red_warrior_in_the_city(loc);
+						cout << setw(3) << setfill('0') << hour << ":30 red " << Red_warrior[A]->name << " " << Red_warrior[A]->number
+							<< " earned " << City[loc]->element << " elements for his headquarter" << endl;
+						Red_headquarter.elements += City[loc]->element;
+						City[loc]->element = 0;
+					}
+					else if (City[loc]->alive_number_of_all_the_blue_warriors_in_the_city(loc) == 1) 
+					{
+						int B = City[loc]->alive_find_the_blue_warrior_in_the_city(loc);
+						cout << setw(3) << setfill('0') << hour << ":30 blue " << Blue_warrior[B]->name << " " << Blue_warrior[B]->number
+							<< " earned " << City[loc]->element << " elements for his headquarter" << endl;
+						Blue_headquarter.elements += City[loc]->element;
+						City[loc]->element = 0;
+					}
+				}
+			}
+
+
+			if (hour * 60 + 35 > T)
+				break;
+			//35分：武士放箭
+			for (int loc = 1; loc < N + 1; ++loc)
+			{
+				City[loc]->shot(loc);
+			}
+
+
+			if (hour * 60 + 38 > T)
+				break;
+			//38分：bomb同归于尽
+			for (int loc = 1; loc < N + 1; ++loc)
+			{
+				City[loc]->suicide(loc);
+			}
+
+
+			if (hour * 60 + 40 > T)
+				break;
+
+			//40分：战斗经过（包括战后dragon欢呼）
+			for(int loc = 1; loc < N + 1; ++loc)
+			{
+				int temp=City[loc]->battle(loc);
+			}
+			
+			for (auto it = red_gift.rbegin(); it != red_gift.rend(); ++it) {
+				if (Red_headquarter.elements >= 8) {
+					//cout << "****************************************" << endl;
+					Red_headquarter.elements -= 8;
+					(*it)->hp += 8;
+				}
+			}
+			for (auto it = blue_gift.begin(); it != blue_gift.end(); ++it) {
+				if (Blue_headquarter.elements >= 8) {
+					//cout << "----------------------------------------" << endl;
+					Blue_headquarter.elements -= 8;
+					(*it)->hp += 8;
+				}
+			}
+			for (auto it = red_harvest.begin(); it != red_harvest.end(); ++it) {
+				//cout << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << endl;
+				Red_headquarter.elements += (*it)->element;
+				(*it)->element = 0;
+			}
+			for (auto it = blue_harvest.begin(); it != blue_harvest.end(); ++it) {
+				//cout << "$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$" << endl;
+				Blue_headquarter.elements += (*it)->element;
+				(*it)->element = 0;
+			}
+			red_gift.clear();
+			blue_gift.clear();
+			red_harvest.clear();
+			blue_harvest.clear();
+
+
+			if (hour * 60 + 50 > T)
+				break;
+
+			//50分：司令部报告生命元数量
+			Red_headquarter.report();
+			Blue_headquarter.report();
+
+			if (hour * 60 + 55 > T)
+				break;
+
+			//55分：各武士报告情况
+			for (int loc = 0; loc <= N + 1; ++loc)
+			{
+				int a = City[loc]->find_the_red_warrior_in_the_city(loc);
+				if (a > 0 && (*Red_warrior[a]).hp > 0)
+					(*Red_warrior[a]).report();
+			}
+			for (int loc = 0; loc <= N + 1; ++loc)
+			{
+				int b = City[loc]->find_the_blue_warrior_in_the_city(loc);
+				if (b > 0 && (*Blue_warrior[b]).hp > 0)
+					(*Blue_warrior[b]).report();
+			}
+			
+			//统一把生命值<=0的武士删除：
+			for (int i = 1; i < red; ++i)
+				if (Red_warrior[i] != nullptr && (*Red_warrior[i]).hp <= 0)
+					Red_warrior[i] = nullptr;
+			for (int j = 1; j < blue; ++j)
+				if (Blue_warrior[j] != nullptr && (*Blue_warrior[j]).hp <= 0)
+					Blue_warrior[j] = nullptr;
+
+			if (over)
+				break;
+		}
+	}
+	return 0;
+}
